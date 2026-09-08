@@ -204,13 +204,18 @@ v_compare_to_literature = np.vectorize(compare_to_literature)
 # =====================================================================
 
 class ErrorPropagator:
-    def __init__(self, formula_str):
+    def __init__(self, formula_str, all_positive=True):
         """
         Initialisiert den Propagator mit einer als String übergebenen Formel.
         Beispiel: ErrorPropagator("m_w * c_w * (T_1 - T_bar) / (T_bar - T_2)")
         """
         # 1. Formel parsen
-        self.f_expr = sp.parsing.sympy_parser.parse_expr(formula_str)
+        parsed = sp.parsing.sympy_parser.parse_expr(formula_str)
+        if all_positive:
+            pos_symbols_map = {s: sp.Symbol(s.name, positive=True, real=True) for s in parsed.free_symbols}
+            self.f_expr = sp.nsimplify(parsed.subs(pos_symbols_map), rational=True)
+        else:
+            self.f_expr = sp.nsimplify(parsed, rational=True)
         
         # 2. Variablen automatisch extrahieren und alphabetisch sortieren
         self.vars = sorted(list(self.f_expr.free_symbols), key=lambda x: x.name)
@@ -231,8 +236,8 @@ class ErrorPropagator:
             self.variance_terms[v.name] = term
             variance += term
             
-        self.abs_err_expr = sp.simplify(sp.sqrt(sp.factor(variance)))
-        self.rel_err_expr = sp.simplify(sp.sqrt(sp.factor(variance / self.f_expr**2)))
+        self.abs_err_expr = sp.nsimplify(sp.sqrt(sp.factor(variance)), rational=True)
+        self.rel_err_expr = sp.nsimplify(sp.sqrt(sp.factor(variance / self.f_expr**2)), rational=True)
         
         # 5. Numerische Funktionen für schnelle Auswertung (numpy)
         self.val_func = sp.lambdify(self.vars, self.f_expr, "numpy")
