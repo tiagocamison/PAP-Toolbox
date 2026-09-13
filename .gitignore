@@ -1,5 +1,19 @@
 __pycache__/
-*.pyc
+*.py[cod]
 .ipynb_checkpoints/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Packaging/build artifacts
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# Generated figures/documents
 *.pdf
 *.png
