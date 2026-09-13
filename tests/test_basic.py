@@ -4,7 +4,7 @@ import pap_toolbox as pap
 
 
 def test_err_digital_scalar():
-    assert pap.err_digital(10.0, percent=1.0, digits=2, resolution=0.01) == 0.12
+    assert np.isclose(pap.err_digital(10.0, percent=1.0, digits=2, resolution=0.01), 0.12)
 
 
 def test_err_digital_array():
