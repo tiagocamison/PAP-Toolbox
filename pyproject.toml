@@ -31,7 +31,10 @@ test = [
 Repository = "https://github.com/tiagocamison/PAP-Toolbox"
 
 [tool.setuptools]
-py-modules = ["pap_toolbox"]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
