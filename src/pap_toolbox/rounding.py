@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING
 
 import numpy as np
 import pandas as pd
@@ -24,16 +24,27 @@ def _get_decimals_pap(err):
     return sig_figs - 1 - oom
 
 
+def _round_uncertainty_up(err, decimals):
+    """Rundet eine Unsicherheit konservativ auf die vorgegebene Dezimalstelle auf."""
+    err_decimal = Decimal(str(abs(err)))
+    quantum = Decimal("1").scaleb(-decimals)
+    return float(err_decimal.quantize(quantum, rounding=ROUND_CEILING))
+
+
 def round_pap(val, err):
     """
-    Numerische PAP-Rundung. Gibt (val_rounded, err_rounded) als Floats zurück.
-    Gut, falls man mit den gerundeten Werten weiterrechnen/plotten will.
+    Numerische PAP-Rundung.
+
+    Der Messwert wird normal auf die durch die Unsicherheit bestimmte Stelle
+    gerundet. Die Unsicherheit selbst wird konservativ aufgerundet.
     """
     if pd.isna(val) or pd.isna(err) or err == 0:
         return float(val), float(err)
 
     decimals = _get_decimals_pap(err)
-    return round(float(val), decimals), round(float(err), decimals)
+    val_rounded = round(float(val), decimals)
+    err_rounded = _round_uncertainty_up(err, decimals)
+    return val_rounded, err_rounded
 
 
 v_round_pap = np.vectorize(round_pap)

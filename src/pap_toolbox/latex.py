@@ -1,9 +1,7 @@
-import math
-
 import numpy as np
 import pandas as pd
 
-from .rounding import first_digit_func
+from .rounding import _get_decimals_pap, round_pap
 
 
 def _is_numeric(val):
@@ -39,18 +37,13 @@ def format_latex(val, err=None):
     except (ValueError, TypeError):
         return str(val)
 
-    first_digit, oom = first_digit_func(err)
-    sig_figs = 2 if first_digit in [1, 2] else 1
-    decimals = sig_figs - 1 - oom
+    decimals = _get_decimals_pap(err)
+    v_rnd, e_rnd = round_pap(val, err)
 
     if decimals <= 0:
-        v_rnd = int(round(val, decimals))
-        e_rnd = int(round(err, decimals))
-        return f"{v_rnd} $\\pm$ {e_rnd}"
+        return f"{int(v_rnd)} $\\pm$ {int(e_rnd)}"
 
     fmt = f".{decimals}f"
-    v_rnd = round(val, decimals)
-    e_rnd = round(err, decimals)
     return f"{v_rnd:{fmt}} $\\pm$ {e_rnd:{fmt}}"
 
 
@@ -65,16 +58,14 @@ def format_separate(val, err):
     if err is None or pd.isna(err) or err == 0:
         return f"{val}", ""
 
-    oom = math.floor(math.log10(abs(err)))
-    first_digit = math.floor(abs(err) / 10**oom)
-    sig_figs = 2 if first_digit in [1, 2] else 1
-    decimals = sig_figs - 1 - oom
+    decimals = _get_decimals_pap(err)
+    v_rnd, e_rnd = round_pap(val, err)
 
     if decimals <= 0:
-        return f"{int(round(val, decimals))}", f"{int(round(err, decimals))}"
+        return f"{int(v_rnd)}", f"{int(e_rnd)}"
 
     fmt = f".{decimals}f"
-    return f"{round(val, decimals):{fmt}}", f"{round(err, decimals):{fmt}}"
+    return f"{v_rnd:{fmt}}", f"{e_rnd:{fmt}}"
 
 
 def export_pap_table(df, config, caption="", label=""):

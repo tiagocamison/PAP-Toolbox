@@ -9,6 +9,33 @@ def test_format_latex_and_sigma_comparison():
     assert np.isclose(pap.compare_to_literature(10.0, 1.0, 12.0, 0.0), 2.0)
 
 
+def test_uncertainty_rounding_is_conservative_for_large_values():
+    value, error = pap.round_pap(98449.71337263903, 4376.84604035785)
+    assert value == 98000
+    assert error == 5000
+    assert pap.format_latex(98449.71337263903, 4376.84604035785) == r"98000 $\pm$ 5000"
+
+
+def test_uncertainty_rounding_is_conservative_for_small_values():
+    value, error = pap.round_pap(1.2345, 0.04376)
+    assert np.isclose(value, 1.23)
+    assert np.isclose(error, 0.05)
+    assert pap.format_latex(1.2345, 0.04376) == r"1.23 $\pm$ 0.05"
+
+
+def test_uncertainty_rounding_preserves_two_digit_rule_for_leading_two():
+    value, error = pap.round_pap(1.2345, 0.2341)
+    assert np.isclose(value, 1.23)
+    assert np.isclose(error, 0.24)
+    assert pap.format_separate(1.2345, 0.2341) == ("1.23", "0.24")
+
+
+def test_exact_uncertainty_is_not_inflated():
+    value, error = pap.round_pap(1.2345, 0.04)
+    assert np.isclose(value, 1.23)
+    assert np.isclose(error, 0.04)
+
+
 def test_error_propagator_evaluate():
     prop = pap.ErrorPropagator("x + y")
     value, error = prop.evaluate({"x": 3.0, "y": 4.0}, {"x": 0.3, "y": 0.4})
