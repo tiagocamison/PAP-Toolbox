@@ -19,6 +19,7 @@ dependencies = [
     "scipy>=1.7.0",
     "matplotlib>=3.4.0",
     "ipython>=7.0.0",
+    "jinja2>=3.1.0",
 ]
 
 [project.optional-dependencies]
@@ -31,7 +32,10 @@ test = [
 Repository = "https://github.com/tiagocamison/PAP-Toolbox"
 
 [tool.setuptools]
-py-modules = ["pap_toolbox"]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
