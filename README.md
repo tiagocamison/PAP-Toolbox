@@ -106,9 +106,24 @@ Die Schnittpunkt-Unsicherheiten verwenden die vollständigen Fit-Kovarianzmatriz
 **Die beiden Fits werden dabei als unabhängig angenommen.**
 Geteilte Kalibrierungs- und systematische Fehler werden nicht automatisch berücksichtigt.
 
-**Wichtige Einschränkung:** `xerr` erzeugt Fehlerbalken im Plot, wird aber nicht
-in der Regression berücksichtigt. Die Regression nutzt `scipy.optimize.curve_fit`
-mit optionalen `yerr`-Gewichten (`absolute_sigma=True`). Für
-signifikante x-Unsicherheiten oder korrelierte Fehler ist eine andere Methode nötig.
+**Messunsicherheiten in beiden Achsen:** Mit `xerr` und `yerr` minimiert
+`linear_fit` die orthogonale Errors-in-Variables-Fehlerquadratsumme
+`χ² = Σ (y - m*x - b)² / (yerr² + m²*xerr²)`.
+Das umfasst die Streuung in *beiden* Achsen. Die Fit-Kovarianz wird
+näherungsweise aus dem Jacobian (Gauss-Newton) berechnet. Mit ausschließlich
+`yerr` bleibt der bisherige `curve_fit` mit `absolute_sigma=True` erhalten.
+Mit ausschließlich `xerr` wird bei strikt positiven x-Fehlern eine inverse
+gewichtete Regression verwendet (y wird als fehlerfrei angenommen).
+`fit.chi2`, `fit.chi2_red` und `fit.pulls` beziehen die x-Fehler mit ein.
+Korrelationen, gemeinsame Eichfehler oder Fehler der gewählten
+Daten-Transformation werden *nicht* automatisch berücksichtigt.
 Die Toolbox führt keine Logarithmierung oder andere Daten-Transformation automatisch durch;
 die physikalisch korrekte Fehlerfortpflanzung der transformierten Daten bleibt explizit.
+
+
+Beispiel mit Unsicherheiten in beiden Koordinaten:
+
+```python
+fit = pap.linear_fit(df, "U", "I", xerr="dU", yerr="dI", show=True)
+print(fit.fit_method, fit.chi2_red)
+```

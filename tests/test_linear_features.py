@@ -21,11 +21,10 @@ def _data():
 
 def test_linear_fit_matches_existing_curve_fit_and_reports_coefficients():
     df = _data()
-    with pytest.warns(UserWarning, match="xerr"):
-        fit = pap.linear_fit(df, "t", "y", xerr=0.05, yerr="dy")
+    fit = pap.linear_fit(df, "t", "y", yerr="dy")
     reference = pap.fit_curve(
         lambda x, m, b: m * x + b, df, "t", "y",
-        x_err_col=0.05, y_err_col="dy",
+        y_err_col="dy",
     )
     np.testing.assert_allclose(fit.params, reference.params, rtol=1e-6)
     np.testing.assert_allclose(fit.cov_matrix, reference.cov_matrix, rtol=1e-5)
@@ -33,7 +32,6 @@ def test_linear_fit_matches_existing_curve_fit_and_reports_coefficients():
     assert fit.intercept == pytest.approx(reference.params[1])
     assert fit.slope_err == pytest.approx(reference.param_errs[0])
     assert fit.intercept_err == pytest.approx(reference.param_errs[1])
-    np.testing.assert_allclose(fit.x_err, np.full(len(df), 0.05))
     np.testing.assert_allclose(fit.residuals, df["y"] - fit.evaluate(df["t"]))
     np.testing.assert_allclose(fit.pulls, fit.residuals / df["dy"])
 
@@ -189,3 +187,4 @@ def test_finite_nonzero_intersection_covariance():
     result = pap.intersect_lines(a, b)
     eigs = np.linalg.eigvalsh(result.cov_matrix)
     assert np.all(eigs >= -1e-12)
+

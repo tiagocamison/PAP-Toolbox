@@ -1,14 +1,14 @@
 """Convenience helpers for linear PAP fits and their intersections.
 
-The fitted model is y = slope*x + intercept.  The underlying optimizer is
-the same scipy curve_fit-based implementation used by pap_toolbox.fit_curve.
+The fitted model is y = slope*x + intercept. Fits without x errors delegate
+to pap_toolbox.fit_curve. With x errors, independent Gaussian uncertainties
+in both coordinates are handled by an errors-in-variables least-squares fit.
 """
 
 from dataclasses import dataclass
-import warnings
-
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.optimize import curve_fit, least_squares
 
 from .fitting import FitResult, fit_curve
 from .latex import format_latex
@@ -55,6 +55,74 @@ def _errors(data, spec, n, name):
     return result
 
 
+def _errors_in_variables_fit(x, y, dx, dy):
+    """Fit both-axis uncertainties using the profiled orthogonal chi-square.
+
+    For each observation, the latent true x-coordinate can be eliminated
+    analytically from the two-dimensional orthogonal-distance objective:
+
+        chi2 = sum((y - m*x - b)**2 / (dy**2 + (m*dx)**2))
+
+    This assumes independent Gaussian 1-sigma uncertainties, with no x-y or
+    between-point correlations. The covariance is the unscaled Gauss-Newton
+    approximation based on the Jacobian of the profiled residuals.
+    """
+    if dy is None:
+        # Exact y, uncertain x: fit the inverse relation x = a*y + c.
+        # This is the exact EIV solution when all dx > 0; transform (a,c)
+        # and its complete covariance back to (m,b).
+        if np.any(dx <= 0):
+            raise ValueError(
+                "Bei ausschließlich xerr müssen alle x-Fehler strikt positiv sein."
+            )
+        if np.ptp(y) == 0:
+            raise ValueError(
+                "Bei ausschließlich xerr müssen die y-Werte verschieden sein."
+            )
+        inverse_params, inverse_cov = curve_fit(
+            _linear_model, y, x, sigma=dx, absolute_sigma=True
+        )
+        a, c = inverse_params
+        if not np.isfinite(a) or abs(a) <= 1e-14:
+            raise ValueError("Die inverse Steigung ist null; kein endlicher Fit möglich.")
+        params = np.array([1.0 / a, -c / a])
+        transform = np.array([[-1.0 / a**2, 0.0],
+                              [c / a**2, -1.0 / a]])
+        covariance = transform @ inverse_cov @ transform.T
+    else:
+        # Start from the established y-weighted linear fit.
+        start = np.polyfit(x, y, 1, w=1.0 / dy)
+
+        def residuals(params):
+            slope, intercept = params
+            scale = np.hypot(dy, slope * dx)
+            return (y - slope * x - intercept) / scale
+
+        def jacobian(params):
+            slope, intercept = params
+            scale = np.hypot(dy, slope * dx)
+            vertical_residual = y - slope * x - intercept
+            slope_derivative = (
+                -x / scale - vertical_residual * slope * dx**2 / scale**3
+            )
+            return np.column_stack((slope_derivative, -1.0 / scale))
+
+        optimization = least_squares(
+            residuals, start, jac=jacobian, max_nfev=10000,
+        )
+        if not optimization.success or not np.all(np.isfinite(optimization.x)):
+            raise ValueError("Errors-in-Variables-Fit ist nicht konvergiert.")
+        params = optimization.x
+        information = optimization.jac.T @ optimization.jac
+        if np.linalg.matrix_rank(information) < 2:
+            raise ValueError("Die Fitparameter sind nicht eindeutig bestimmbar.")
+        covariance = np.linalg.inv(information)
+
+    if not np.all(np.isfinite(covariance)) or np.any(np.diag(covariance) < 0):
+        raise ValueError("Die Parameter-Kovarianz ist nicht endlich oder ungültig.")
+    return FitResult(_linear_model, x, y, dx, dy, params, covariance)
+
+
 def _label(name, unit):
     label = name if isinstance(name, str) else "x"
     return f"{label} [{unit}]" if unit else label
@@ -63,7 +131,7 @@ def _label(name, unit):
 class LinearFitResult(FitResult):
     """FitResult for y = m*x+b, with named parameters and residual helpers."""
 
-    def __init__(self, result, x_unit=None, y_unit=None):
+    def __init__(self, result, x_unit=None, y_unit=None, errors_in_variables=False):
         super().__init__(
             result.func,
             result.x_data,
@@ -75,6 +143,18 @@ class LinearFitResult(FitResult):
         )
         self.x_unit = x_unit
         self.y_unit = y_unit
+        self.fit_method = "errors_in_variables" if errors_in_variables else "vertical"
+        # These are the *vertical equivalents* of orthogonal measurement errors.
+        if errors_in_variables:
+            self.effective_y_err = np.hypot(
+                self.y_err if self.y_err is not None else 0.0,
+                self.slope * self.x_err,
+            )
+            self.chi2 = float(np.sum((self.residuals / self.effective_y_err) ** 2))
+            self.ndof = len(self.x_data) - 2
+            self.chi2_red = self.chi2 / self.ndof if self.ndof > 0 else np.nan
+        else:
+            self.effective_y_err = self.y_err
         # Populated when linear_fit(plot=True) creates a figure.
         self.axes = None
 
@@ -100,10 +180,10 @@ class LinearFitResult(FitResult):
 
     @property
     def pulls(self):
-        """Standardized residuals. Only defined when y-errors were provided."""
-        if self.y_err is None:
-            raise ValueError("Pulls benötigen yerr.")
-        return self.residuals / self.y_err
+        """Vertical residuals in units of combined x/y uncertainty."""
+        if self.effective_y_err is None:
+            raise ValueError("Pulls benötigen xerr oder yerr.")
+        return self.residuals / self.effective_y_err
 
     @property
     def slope_unit(self):
@@ -130,14 +210,14 @@ class LinearFitResult(FitResult):
         if np.isfinite(self.chi2_red):
             print(f"chi2 = {self.chi2:.3g}, ndof = {self.ndof}, chi2/ndof = {self.chi2_red:.3g}")
         else:
-            print("chi2 nicht definiert (keine y-Unsicherheiten oder ndof=0).")
+            print("chi2 nicht definiert (keine Messunsicherheiten oder ndof=0).")
 
     def plot_residuals(self, ax=None, *, standardized=False, xlabel="", ylabel=None):
         """Draw residuals with measurement uncertainties and a zero reference line."""
         if ax is None:
             _, ax = plt.subplots(figsize=(8, 3))
         values = self.pulls if standardized else self.residuals
-        errors = np.ones_like(values) if standardized else self.y_err
+        errors = np.ones_like(values) if standardized else self.effective_y_err
         ax.errorbar(
             self.x_data, values, xerr=self.x_err, yerr=errors,
             fmt="x", color="black", capsize=3, label="Residuen",
@@ -253,7 +333,12 @@ def linear_fit(
         linear_fit(x_array, y_array, yerr=0.1, show=True)
 
     x_range=(minimum, maximum) selects an inclusive subset before fitting.
-    xerr is plotted but intentionally NOT included in curve_fit weights.
+    With xerr, fits use an errors-in-variables objective accounting for
+    both horizontal and vertical independent measurement uncertainties.
+    With only yerr, the existing curve_fit weighted fit is unchanged.
+    With only xerr, y is assumed exact and inverse linear regression is used;
+    in that case every selected xerr must be strictly positive.
+    Covariances are first-order Gauss-Newton estimates, not scaled by chi2/ndof.
     All 1-D error arrays must match the *unfiltered* data length.
     show=True enables plot and report unless overridden separately.
     """
@@ -301,23 +386,24 @@ def linear_fit(
     if dy is not None and (not np.all(np.isfinite(dy)) or np.any(dy <= 0)):
         raise ValueError("yerr muss endlich und strikt positiv sein.")
 
-    if dx is not None:
-        warnings.warn(
-            "xerr wird nur geplottet, nicht in der Fit-Gewichtung berücksichtigt.",
-            UserWarning, stacklevel=2,
+    use_eiv = dx is not None and np.any(dx > 0)
+    if use_eiv:
+        base = _errors_in_variables_fit(x_values, y_values, dx, dy)
+    else:
+        data_fit = {"x": x_values, "y": y_values}
+        if dx is not None:
+            data_fit["xerr"] = dx
+        if dy is not None:
+            data_fit["yerr"] = dy
+        base = fit_curve(
+            _linear_model, data_fit, "x", "y",
+            x_err_col="xerr" if dx is not None else None,
+            y_err_col="yerr" if dy is not None else None,
         )
-
-    data_fit = {"x": x_values, "y": y_values}
-    if dx is not None:
-        data_fit["xerr"] = dx
-    if dy is not None:
-        data_fit["yerr"] = dy
-    base = fit_curve(
-        _linear_model, data_fit, "x", "y",
-        x_err_col="xerr" if dx is not None else None,
-        y_err_col="yerr" if dy is not None else None,
+    result = LinearFitResult(
+        base, x_unit=x_unit, y_unit=y_unit,
+        errors_in_variables=use_eiv,
     )
-    result = LinearFitResult(base, x_unit=x_unit, y_unit=y_unit)
 
     plot_requested = bool(show) if plot is None else bool(plot)
     report_requested = bool(show) if report is None else bool(report)
