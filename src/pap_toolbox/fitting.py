@@ -25,7 +25,7 @@ def _fit_mask(x, x_range=None, fitranges=None):
         return mask
     except (TypeError, ValueError) as exc:
         raise ValueError(
-            "Fitbereiche benötigen (minimum, maximum) mit endlichen, aufsteigenden Grenzen."
+            "Fitbereiche benötigen endliche, aufsteigende Grenzen (minimum, maximum)."
         ) from exc
 
 
