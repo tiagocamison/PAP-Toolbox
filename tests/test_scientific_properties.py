@@ -86,7 +86,11 @@ def test_fit_accepts_constant_uncertainties_and_preserves_them():
     )
     np.testing.assert_allclose(fit.x_err, np.full(6, 0.05))
     np.testing.assert_allclose(fit.y_err, np.full(6, 0.2))
-    expected_chi2 = np.sum(((data["y"] - fit.evaluate(data["x"])) / 0.2) ** 2)
+    # The generic EIV objective reduces analytically to the profiled
+    # linear chi-square when f(x) = m*x+b.
+    expected_chi2 = np.sum(((data["y"] - fit.evaluate(data["x"])) /
+                            np.hypot(0.2, fit.params[0]*0.05)) ** 2)
+    assert fit.fit_method == "errors_in_variables"
     assert fit.chi2 == pytest.approx(expected_chi2)
 
 

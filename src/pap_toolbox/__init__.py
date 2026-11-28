@@ -3,6 +3,7 @@
 from .device_errors import err_analog, err_digital
 from .fitting import FitResult, fit_curve, min_max_slope
 from .latex import export_pap_table, format_latex, format_separate, v_format_latex
+from .linear import LineIntersection, LinearFitResult, intersect_lines, linear_fit
 from .propagation import ErrorPropagator
 from .rounding import (
     compare_to_literature,
@@ -16,12 +17,16 @@ from .statistics import series_stats, weighted_mean
 __all__ = [
     "ErrorPropagator",
     "FitResult",
+    "LinearFitResult",
+    "LineIntersection",
     "compare_to_literature",
     "err_analog",
     "err_digital",
     "export_pap_table",
     "first_digit_func",
     "fit_curve",
+    "linear_fit",
+    "intersect_lines",
     "format_latex",
     "format_separate",
     "min_max_slope",

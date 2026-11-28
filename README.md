@@ -15,10 +15,9 @@ git clone https://github.com/tiagocamison/PAP-Toolbox.git
 cd PAP-Toolbox
 ```
 
-Für die Arbeit am `package-prep`-Branch:
+Für die lokale Entwicklung:
 
 ```bash
-git switch package-prep
 python -m pip install -e ".[test]"
 ```
 
@@ -28,7 +27,7 @@ Danach kann die Toolbox unabhängig vom aktuellen Arbeitsordner importiert werde
 import pap_toolbox as pap
 ```
 
-Durch die editable Installation (`-e`) werden Änderungen an `pap_toolbox.py` direkt von der installierten Umgebung verwendet; eine Neuinstallation nach jeder Codeänderung ist nicht nötig.
+Durch die editable Installation (`-e`) werden Änderungen an `src/pap_toolbox/` direkt von der installierten Umgebung verwendet; eine Neuinstallation nach jeder Codeänderung ist nicht nötig.
 
 ### Normale lokale Installation
 
@@ -59,3 +58,155 @@ Die installierbaren Runtime-Abhängigkeiten werden in `pyproject.toml` verwaltet
 ## Kontakt und Beiträge
 
 Bei Verbesserungsvorschlägen oder Bugs gerne an tiago.camison_grimbach@stud.uni-heidelberg.de wenden oder direkt ein Issue bzw. einen Pull Request öffnen.
+
+
+## Lineare Fits (Convenience API)
+
+Kurzer Fit mit Grafik **und** PAP-formatierter Ausgabe:
+
+```python
+import pap_toolbox as pap
+
+fit = pap.linear_fit(df, "t_s", "ln_A", yerr="dln_A", show=True)
+delta, ddelta = -fit.slope, fit.slope_err
+```
+
+Mit Fehlerbalken, Residuen und Einheiten:
+
+```python
+fit = pap.linear_fit(
+    df, "t_s", "ln_A", yerr="dln_A",
+    x_unit="s", show=True, residuals=True
+)
+```
+
+Man kann Ergebnisse ohne Grafik oder Bericht bekommen (`plot=False`,
+`report=False`, Standard) oder die Ausgabe mit `show=True` aktivieren.
+`plot=True` und `report=True` lassen sich unabhängig setzen.
+Ein optionales `plot_band=True` zeigt das bestehende Monte-Carlo-Fehlerband.
+
+```python
+# Fit nur über einen Abschnitt (Grenzen inklusive)
+fit = pap.linear_fit(df, "log_f", "gain_db", yerr="dgain",
+                     x_range=(2, 3), plot=True)
+# Alternativ: linear_fit(x_array, y_array, yerr=0.2)
+```
+
+Ein Schnittpunkt zweier linearer Fits (z.B. asymptotische Bode-Geraden):
+
+```python
+left = pap.linear_fit(df, "log_f", "gain_db", yerr="dgain", x_range=(2, 3))
+right = pap.linear_fit(df, "log_f", "gain_db", yerr="dgain", x_range=(4, 5))
+crossing = pap.intersect_lines(left, right)
+print(crossing.x, crossing.x_err)   # Schnittpunkt in den x-Koordinaten
+freq, dfreq = crossing.as_frequency(base=10)  # nur wenn x = log10(f / Einheit)
+```
+
+Die Schnittpunkt-Unsicherheiten verwenden die vollständigen Fit-Kovarianzmatrizen.
+**Die beiden Fits werden dabei als unabhängig angenommen.**
+Geteilte Kalibrierungs- und systematische Fehler werden nicht automatisch berücksichtigt.
+
+**Messunsicherheiten in beiden Achsen:** Mit `xerr` und `yerr` minimiert
+`linear_fit` die orthogonale Errors-in-Variables-Fehlerquadratsumme
+`χ² = Σ (y - m*x - b)² / (yerr² + m²*xerr²)`.
+Das umfasst die Streuung in *beiden* Achsen. Die Fit-Kovarianz wird
+näherungsweise aus dem Jacobian (Gauss-Newton) berechnet. Mit ausschließlich
+`yerr` bleibt der bisherige `curve_fit` mit `absolute_sigma=True` erhalten.
+Mit ausschließlich `xerr` wird bei strikt positiven x-Fehlern eine inverse
+gewichtete Regression verwendet (y wird als fehlerfrei angenommen).
+`fit.chi2`, `fit.chi2_red` und `fit.pulls` beziehen die x-Fehler mit ein.
+Korrelationen, gemeinsame Eichfehler oder Fehler der gewählten
+Daten-Transformation werden *nicht* automatisch berücksichtigt.
+Die Toolbox führt keine Logarithmierung oder andere Daten-Transformation automatisch durch;
+die physikalisch korrekte Fehlerfortpflanzung der transformierten Daten bleibt explizit.
+
+
+Beispiel mit Unsicherheiten in beiden Koordinaten:
+
+```python
+fit = pap.linear_fit(df, "U", "I", xerr="dU", yerr="dI", show=True)
+print(fit.fit_method, fit.chi2_red)
+```
+
+
+## Fitbereiche, Parametergrenzen und Residuen
+
+Beide Fitfunktionen akzeptieren `x_range=(lo, hi)` (ein Intervall) oder
+`fitranges=[(lo1, hi1), (lo2, hi2)]` (Vereinigung mehrerer Intervalle für
+**einen** gemeinsamen Fit; Endpunkte inklusive, keine doppelten Messpunkte).
+Die Auswahl betrifft Fit, Fehlerarrays, Chi-Quadrat und Residuen; der Plot
+zeigt die ausgewählten Daten und die Fitkurve über die dargestellte x-Achse.
+`x_lim` bleibt eine reine Plotgrenze.
+
+```python
+fit = pap.fit_curve(
+    resonance, df, "f", "A", y_err_col="dA",
+    p0=[1, 100, 5],
+    fitranges=[(80, 95), (105, 120)],
+    bounds=([0, 80, 0], [np.inf, 120, np.inf]),
+)
+fit.plot(residuals=True, standardized=True)
+# Alternativ: fit.plot_residuals() oder fit.plot_with_residuals()
+```
+
+`fit_curve(..., show=True, residuals=True)` erzeugt Plot und Bericht direkt.
+Auch beim allgemeinen Fit berücksichtigt die Regression jetzt positive
+x-Unsicherheiten. Statt einer linearen Fehlerfortpflanzungs-Näherung werden
+die unbekannten wahren x-Koordinaten mitoptimiert (siehe unten).
+
+```python
+fit = pap.linear_fit(df, "U", "I", xerr="dU", yerr="dI",
+                     fit_intercept=False, bounds=(0, np.inf), show=True)
+m, dm = fit.slope, fit.slope_err
+```
+
+`fit_intercept=False` fixiert b exakt auf 0; `params` und `cov_matrix`
+haben dann nur einen freien Parameter. `fit.intercept` und
+`fit.intercept_err` sind 0, `fit.line_cov_matrix` liefert die
+vollständige (m,b)-Kovarianz für Schnittpunkte.
+
+Bounds sind wie in SciPy `(lower, upper)`, in Parameterreihenfolge
+(m, b) bzw. (m,) beim Ursprungsfit; skalare Grenzen gelten für alle freien
+Parameter. Grenzen sind inklusive: für nur positive Steigung und freien
+Achsenabschnitt etwa `bounds=([0, -np.inf], [np.inf, np.inf])`.
+Die lokale Kovarianznäherung ist bei aktiven Grenzen **kein** verlässliches
+symmetrisches Konfidenzintervall.
+
+
+## Nichtlineare Fits mit x- und y-Unsicherheiten
+
+```python
+fit = pap.fit_curve(
+    resonance, df, "f", "A",
+    x_err_col="df", y_err_col="dA",
+    p0=[1, 100, 5],
+    bounds=([0, 80, 0], [np.inf, 120, np.inf]),
+    x_range=(80, 120), show=True, residuals=True,
+)
+```
+
+Bei positiven x-Fehlern minimiert die Funktion die gewichtete orthogonale
+Fehlerquadratsumme über Modellparameter und wahre x-Koordinaten:
+
+    chi² = Σ [(x_i - X_i)/dx_i]² + [(y_i - f(X_i; params))/dy_i]².
+
+`fit.x_adjusted` enthält die optimierten X_i; `fit.x_data` und
+`fit.y_data` bleiben die Messwerte. x-Fehler von 0 fixieren X_i = x_i.
+Bei ausschließlich positiven x-Fehlern und fehlenden y-Fehlern gilt y als
+exakt: Es wird unter f(X_i; params) = y_i minimiert. Das setzt eine reguläre
+lokale Umkehrbarkeit voraus; gemischte null/positive x-Fehler ohne y-Fehler
+werden nicht unterstützt. Ohne positive x-Fehler bleibt die bisherige
+`curve_fit`-Regression erhalten.
+
+`fit.chi2` enthält beide Koordinatenbeiträge; `fit.pulls` sind signierte
+normierte orthogonale Abstände (Summe der Quadrate = chi²). Die rohen
+vertikalen Residuen bleiben y_i - f(x_i); ihre Fehlerbalken verwenden eine
+lokale lineare Fehlerfortpflanzung zur Darstellung.
+Die Parameterkovarianz ist eine lokale Gauss-Newton-Näherung unter
+Elimination der X_i, ohne Skalierung mit chi²/ndof. Aktive Parametergrenzen
+erfordern für belastbare Konfidenzintervalle gesonderte Methoden.
+Das Modell muss punktweise wirken und in der Umgebung der Messwerte
+auswertbar sein. Wie bei sonstigen nichtlinearen Fits kann die Lösung vom
+Startwert abhängen. Geteilte Systematiken und korrelierte Messfehler werden
+nicht modelliert; Fitbereiche selektieren gemessene x-Werte, begrenzen
+aber nicht die latenten X_i.
