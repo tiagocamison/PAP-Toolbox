@@ -32,6 +32,7 @@ def test_generic_linear_matches_profiled_linear_wrapper():
     np.testing.assert_allclose(generic.params,linear.params,rtol=2e-6,atol=1e-7)
     assert generic.chi2 == pytest.approx(linear.chi2,rel=1e-8)
     np.testing.assert_allclose(generic.pulls,linear.pulls,rtol=2e-5,atol=1e-7)
+    np.testing.assert_allclose(generic.x_adjusted,linear.x_adjusted,rtol=2e-6,atol=1e-7)
 
 
 def test_nonlinear_against_independent_joint_objective_and_covariance():

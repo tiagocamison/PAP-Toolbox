@@ -217,6 +217,10 @@ class LinearFitResult(FitResult):
                 self.y_err if self.y_err is not None else 0.0,
                 self.slope * self.x_err,
             )
+            # Analytically profiled true x coordinates for the linear model.
+            self.x_adjusted = self.x_data + (
+                self.slope * (self.x_err / self.effective_y_err)**2 * self.residuals
+            )
             self.chi2 = float(np.sum((self.residuals / self.effective_y_err) ** 2))
             self.ndof = len(self.x_data) - len(self.params)
             self.chi2_red = self.chi2 / self.ndof if self.ndof > 0 else np.nan
