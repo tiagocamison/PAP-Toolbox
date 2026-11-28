@@ -5,6 +5,43 @@ from scipy.optimize import curve_fit
 from .latex import format_latex
 
 
+def _fit_mask(x, x_range=None, fitranges=None):
+    """Inclusive union of intervals; each observation is selected at most once."""
+    if x_range is not None and fitranges is not None:
+        raise ValueError("x_range und fitranges sind gegenseitig exklusiv.")
+    if x_range is None and fitranges is None:
+        return np.ones(len(x), dtype=bool)
+    ranges = [x_range] if x_range is not None else fitranges
+    try:
+        ranges = list(ranges)
+        if not ranges:
+            raise ValueError("fitranges darf nicht leer sein.")
+        mask = np.zeros(len(x), dtype=bool)
+        for low, high in ranges:
+            low, high = float(low), float(high)
+            if not np.isfinite([low, high]).all() or low > high:
+                raise ValueError("Fitbereiche benötigen endliche, aufsteigende Grenzen.")
+            mask |= (x >= low) & (x <= high)
+        return mask
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "Fitbereiche benötigen (minimum, maximum) mit endlichen, aufsteigenden Grenzen."
+        ) from exc
+
+
+def _fit_errors(data, spec, n):
+    if spec is None:
+        return None
+    if isinstance(spec, str):
+        spec = data[spec]
+    arr = np.asarray(spec, dtype=float)
+    if arr.ndim == 0:
+        return np.full(n, float(arr))
+    if arr.shape != (n,):
+        raise ValueError("Fehler müssen skalar sein oder einen Eintrag pro Messpunkt haben.")
+    return arr
+
+
 class FitResult:
     """
     Speichert die Ergebnisse eines Curve-Fits und stellt Hilfsfunktionen
@@ -21,6 +58,8 @@ class FitResult:
         self.params = popt
         self.param_errs = np.sqrt(np.diag(pcov))
         self.cov_matrix = pcov
+        self.effective_y_err = self.y_err
+        self.axes = None
 
         if self.y_err is not None:
             residuals = self.y_data - self.func(self.x_data, *self.params)
@@ -33,6 +72,48 @@ class FitResult:
     def evaluate(self, x):
         """Wertet die angefittete Funktion an den Stellen x aus."""
         return self.func(x, *self.params)
+
+    @property
+    def residuals(self):
+        return self.y_data - self.evaluate(self.x_data)
+
+    @property
+    def pulls(self):
+        """Residuals divided by the measurement uncertainty used in the fit."""
+        if self.effective_y_err is None:
+            raise ValueError("Pulls benötigen yerr (oder xerr bei linearem EIV-Fit).")
+        return self.residuals / self.effective_y_err
+
+    def plot_residuals(self, ax=None, *, standardized=False, xlabel="", ylabel=None):
+        """Plot raw or standardized residuals of the selected measurements."""
+        values = self.pulls if standardized else self.residuals
+        if ax is None:
+            _, ax = plt.subplots(figsize=(8, 3))
+        errors = np.ones_like(values) if standardized else self.effective_y_err
+        ax.errorbar(self.x_data, values, xerr=self.x_err, yerr=errors,
+                    fmt="x", color="black", capsize=3, label="Residuen")
+        ax.axhline(0, linestyle="--", color="gray")
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel or ("Pulls" if standardized else "Residuen"))
+        ax.grid(True, linestyle="--", alpha=0.5)
+        return ax
+
+    def plot_with_residuals(self, *, title="", xlabel="", ylabel="",
+                            standardized=False, plot_band=False, language="de",
+                            **plot_kwargs):
+        """Plot the fit and a shared-x residual panel."""
+        if standardized:
+            _ = self.pulls  # Fail before creating a figure if errors are missing.
+        fig, (top, bottom) = plt.subplots(
+            2, 1, sharex=True, figsize=(8, 7),
+            gridspec_kw={"height_ratios": [3, 1]},
+        )
+        self.plot(ax=top, title=title, ylabel=ylabel, plot_band=plot_band,
+                  language=language, **plot_kwargs)
+        self.plot_residuals(ax=bottom, standardized=standardized, xlabel=xlabel)
+        top.set_xlabel("")
+        fig.tight_layout()
+        return top, bottom
 
     def print_results(self, param_names=None):
         """Gibt die gefitteten Parameter inkl. Fehler im PAP-Format aus."""
@@ -63,8 +144,19 @@ class FitResult:
         x_lim=None,
         y_lim=None,
         language="de",
+        residuals=False,
+        standardized=False,
     ):
-        """Plottet Daten, Fit und Fehlerband. Optimiert für große Datensätze (>10k Punkte)."""
+        """Plot the fit, optionally with a separate residual panel."""
+        if residuals or standardized:
+            if ax is not None:
+                raise ValueError("Ein Residuenpanel benötigt eine neue Figure.")
+            return self.plot_with_residuals(
+                title=title, xlabel=xlabel, ylabel=ylabel, standardized=standardized,
+                plot_band=plot_band, language=language, data_label=data_label,
+                fit_label=fit_label, color_data=color_data, color_fit=color_fit,
+                plot_fit=plot_fit, extra_points=extra_points, x_lim=x_lim, y_lim=y_lim,
+            )
         if ax is None:
             _, ax = plt.subplots(figsize=(8, 5))
 
@@ -138,34 +230,55 @@ class FitResult:
         return ax
 
 
-def fit_curve(func, df_or_dict, x_col, y_col, x_err_col=None, y_err_col=None, p0=None):
+def fit_curve(func, df_or_dict, x_col, y_col, x_err_col=None, y_err_col=None,
+              p0=None, *, x_range=None, fitranges=None, bounds=(-np.inf, np.inf),
+              show=False, plot=None, report=None, residuals=False,
+              standardized=False, **plot_kwargs):
+    """Fit an arbitrary model with optional parameter bounds and fit intervals.
+
+    x_range=(lo, hi) or fitranges=[(lo, hi), ...] selects an inclusive union.
+    Error columns, scalar errors and full-length error arrays are supported.
+    As before, only y-errors weight this generic curve_fit; x-errors are plotted.
+    bounds=(lower, upper) uses the same parameter order as func and p0.
     """
-    Führt einen Curve-Fit durch. Falls y_err gegeben ist, wird ein gewichteter Fit gemacht.
-    Gibt ein FitResult-Objekt zurück.
-    """
-    x_data = df_or_dict[x_col]
-    y_data = df_or_dict[y_col]
+    x_data = np.asarray(df_or_dict[x_col], dtype=float)
+    y_data = np.asarray(df_or_dict[y_col], dtype=float)
+    if x_data.ndim != 1 or y_data.shape != x_data.shape:
+        raise ValueError("x und y müssen gleich lange eindimensionale Arrays sein.")
+    x_err = _fit_errors(df_or_dict, x_err_col, len(x_data))
+    y_err = _fit_errors(df_or_dict, y_err_col, len(x_data))
+    mask = _fit_mask(x_data, x_range, fitranges)
+    x_data, y_data = x_data[mask], y_data[mask]
+    x_err = x_err[mask] if x_err is not None else None
+    y_err = y_err[mask] if y_err is not None else None
+    if not len(x_data) or not np.isfinite(x_data).all() or not np.isfinite(y_data).all():
+        raise ValueError("Der Fitbereich benötigt endliche Messdaten.")
+    if x_err is not None and (not np.isfinite(x_err).all() or np.any(x_err < 0)):
+        raise ValueError("x-Fehler müssen endlich und nichtnegativ sein.")
+    if y_err is not None and (not np.isfinite(y_err).all() or np.any(y_err <= 0)):
+        raise ValueError("y-Fehler müssen endlich und strikt positiv sein.")
 
-    x_err = None
-    if x_err_col is not None:
-        if isinstance(x_err_col, str):
-            x_err = df_or_dict[x_err_col]
-        else:
-            x_err = np.full(len(x_data), x_err_col)
-
-    y_err = None
-    if y_err_col is not None:
-        if isinstance(y_err_col, str):
-            y_err = df_or_dict[y_err_col]
-        else:
-            y_err = np.full(len(y_data), y_err_col)
-
+    kwargs = dict(p0=p0, bounds=bounds)
     if y_err is not None:
-        popt, pcov = curve_fit(func, x_data, y_data, sigma=y_err, absolute_sigma=True, p0=p0)
-    else:
-        popt, pcov = curve_fit(func, x_data, y_data, p0=p0)
+        kwargs.update(sigma=y_err, absolute_sigma=True)
+    popt, pcov = curve_fit(func, x_data, y_data, **kwargs)
+    result = FitResult(func, x_data, y_data, x_err, y_err, popt, pcov)
 
-    return FitResult(func, x_data, y_data, x_err, y_err, popt, pcov)
+    plot_requested = bool(show) if plot is None else bool(plot)
+    report_requested = bool(show) if report is None else bool(report)
+    if residuals or standardized:
+        if plot is False:
+            raise ValueError("Residuen benötigen einen Plot.")
+        plot_requested = True
+    if plot_requested:
+        plot_kwargs.setdefault("xlabel", str(x_col))
+        plot_kwargs.setdefault("ylabel", str(y_col))
+        axes = result.plot(residuals=residuals, standardized=standardized, **plot_kwargs)
+        result.axes = axes if isinstance(axes, tuple) else (axes,)
+        plt.show()
+    if report_requested:
+        result.print_results()
+    return result
 
 
 def min_max_slope(x_data, y_data, y_err):

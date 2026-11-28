@@ -127,3 +127,47 @@ Beispiel mit Unsicherheiten in beiden Koordinaten:
 fit = pap.linear_fit(df, "U", "I", xerr="dU", yerr="dI", show=True)
 print(fit.fit_method, fit.chi2_red)
 ```
+
+
+## Fitbereiche, Parametergrenzen und Residuen
+
+Beide Fitfunktionen akzeptieren `x_range=(lo, hi)` (ein Intervall) oder
+`fitranges=[(lo1, hi1), (lo2, hi2)]` (Vereinigung mehrerer Intervalle für
+**einen** gemeinsamen Fit; Endpunkte inklusive, keine doppelten Messpunkte).
+Die Auswahl betrifft Fit, Fehlerarrays, Chi-Quadrat und Residuen; der Plot
+zeigt die ausgewählten Daten und die Fitkurve über die dargestellte x-Achse.
+`x_lim` bleibt eine reine Plotgrenze.
+
+```python
+fit = pap.fit_curve(
+    resonance, df, "f", "A", y_err_col="dA",
+    p0=[1, 100, 5],
+    fitranges=[(80, 95), (105, 120)],
+    bounds=([0, 80, 0], [np.inf, 120, np.inf]),
+)
+fit.plot(residuals=True, standardized=True)
+# Alternativ: fit.plot_residuals() oder fit.plot_with_residuals()
+```
+
+`fit_curve(..., show=True, residuals=True)` erzeugt Plot und Bericht direkt.
+Beim allgemeinen Fit berücksichtigt die Regression weiterhin nur y-Fehler;
+x-Fehler dienen ausschließlich der Darstellung. Bei `linear_fit` gehen
+sie wie oben beschrieben in die Regression ein.
+
+```python
+fit = pap.linear_fit(df, "U", "I", xerr="dU", yerr="dI",
+                     fit_intercept=False, bounds=(0, np.inf), show=True)
+m, dm = fit.slope, fit.slope_err
+```
+
+`fit_intercept=False` fixiert b exakt auf 0; `params` und `cov_matrix`
+haben dann nur einen freien Parameter. `fit.intercept` und
+`fit.intercept_err` sind 0, `fit.line_cov_matrix` liefert die
+vollständige (m,b)-Kovarianz für Schnittpunkte.
+
+Bounds sind wie in SciPy `(lower, upper)`, in Parameterreihenfolge
+(m, b) bzw. (m,) beim Ursprungsfit; skalare Grenzen gelten für alle freien
+Parameter. Grenzen sind inklusive: für nur positive Steigung und freien
+Achsenabschnitt etwa `bounds=([0, -np.inf], [np.inf, np.inf])`.
+Die lokale Kovarianznäherung ist bei aktiven Grenzen **kein** verlässliches
+symmetrisches Konfidenzintervall.
