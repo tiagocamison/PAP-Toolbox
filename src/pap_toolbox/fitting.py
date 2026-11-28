@@ -2,6 +2,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import curve_fit
 
+from ._eiv import fit_eiv
+
 from .latex import format_latex
 
 
@@ -59,6 +61,9 @@ class FitResult:
         self.param_errs = np.sqrt(np.diag(pcov))
         self.cov_matrix = pcov
         self.effective_y_err = self.y_err
+        self.fit_method = "vertical"
+        self.x_adjusted = self.x_data.copy()
+        self._orthogonal_pulls = None
         self.axes = None
 
         if self.y_err is not None:
@@ -79,9 +84,11 @@ class FitResult:
 
     @property
     def pulls(self):
-        """Residuals divided by the measurement uncertainty used in the fit."""
+        """Signed normalized distances; for EIV, squared pulls sum to chi2."""
+        if self._orthogonal_pulls is not None:
+            return self._orthogonal_pulls.copy()
         if self.effective_y_err is None:
-            raise ValueError("Pulls benötigen yerr (oder xerr bei linearem EIV-Fit).")
+            raise ValueError("Pulls benötigen yerr oder xerr bei einem EIV-Fit.")
         return self.residuals / self.effective_y_err
 
     def plot_residuals(self, ax=None, *, standardized=False, xlabel="", ylabel=None):
@@ -238,8 +245,12 @@ def fit_curve(func, df_or_dict, x_col, y_col, x_err_col=None, y_err_col=None,
 
     x_range=(lo, hi) or fitranges=[(lo, hi), ...] selects an inclusive union.
     Error columns, scalar errors and full-length error arrays are supported.
-    As before, only y-errors weight this generic curve_fit; x-errors are plotted.
+    Positive x-errors activate orthogonal errors-in-variables regression.
+    Zero x-errors fix the corresponding measured x. Without y-errors, y is
+    treated as exact; this requires strictly positive x-errors and a regular
+    local inverse. Otherwise the established curve_fit path is retained.
     bounds=(lower, upper) uses the same parameter order as func and p0.
+    The model must act pointwise on a 1-D array of x values.
     """
     x_data = np.asarray(df_or_dict[x_col], dtype=float)
     y_data = np.asarray(df_or_dict[y_col], dtype=float)
@@ -258,11 +269,22 @@ def fit_curve(func, df_or_dict, x_col, y_col, x_err_col=None, y_err_col=None,
     if y_err is not None and (not np.isfinite(y_err).all() or np.any(y_err <= 0)):
         raise ValueError("y-Fehler müssen endlich und strikt positiv sein.")
 
-    kwargs = dict(p0=p0, bounds=bounds)
-    if y_err is not None:
-        kwargs.update(sigma=y_err, absolute_sigma=True)
-    popt, pcov = curve_fit(func, x_data, y_data, **kwargs)
-    result = FitResult(func, x_data, y_data, x_err, y_err, popt, pcov)
+    if x_err is not None and np.any(x_err > 0):
+        eiv = fit_eiv(func, x_data, y_data, x_err, y_err, p0, bounds)
+        result = FitResult(func, x_data, y_data, x_err, y_err, eiv.params, eiv.cov)
+        result.fit_method = "errors_in_variables"
+        result.x_adjusted = eiv.x_adjusted
+        result._orthogonal_pulls = eiv.pulls
+        result.effective_y_err = eiv.effective_y_err
+        result.chi2 = float(np.dot(eiv.pulls, eiv.pulls))
+        result.ndof = len(x_data) - len(eiv.params)
+        result.chi2_red = result.chi2 / result.ndof if result.ndof > 0 else np.nan
+    else:
+        kwargs = dict(p0=p0, bounds=bounds)
+        if y_err is not None:
+            kwargs.update(sigma=y_err, absolute_sigma=True)
+        popt, pcov = curve_fit(func, x_data, y_data, **kwargs)
+        result = FitResult(func, x_data, y_data, x_err, y_err, popt, pcov)
 
     plot_requested = bool(show) if plot is None else bool(plot)
     report_requested = bool(show) if report is None else bool(report)

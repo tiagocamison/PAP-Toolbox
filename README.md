@@ -150,9 +150,9 @@ fit.plot(residuals=True, standardized=True)
 ```
 
 `fit_curve(..., show=True, residuals=True)` erzeugt Plot und Bericht direkt.
-Beim allgemeinen Fit berücksichtigt die Regression weiterhin nur y-Fehler;
-x-Fehler dienen ausschließlich der Darstellung. Bei `linear_fit` gehen
-sie wie oben beschrieben in die Regression ein.
+Auch beim allgemeinen Fit berücksichtigt die Regression jetzt positive
+x-Unsicherheiten. Statt einer linearen Fehlerfortpflanzungs-Näherung werden
+die unbekannten wahren x-Koordinaten mitoptimiert (siehe unten).
 
 ```python
 fit = pap.linear_fit(df, "U", "I", xerr="dU", yerr="dI",
@@ -171,3 +171,42 @@ Parameter. Grenzen sind inklusive: für nur positive Steigung und freien
 Achsenabschnitt etwa `bounds=([0, -np.inf], [np.inf, np.inf])`.
 Die lokale Kovarianznäherung ist bei aktiven Grenzen **kein** verlässliches
 symmetrisches Konfidenzintervall.
+
+
+## Nichtlineare Fits mit x- und y-Unsicherheiten
+
+```python
+fit = pap.fit_curve(
+    resonance, df, "f", "A",
+    x_err_col="df", y_err_col="dA",
+    p0=[1, 100, 5],
+    bounds=([0, 80, 0], [np.inf, 120, np.inf]),
+    x_range=(80, 120), show=True, residuals=True,
+)
+```
+
+Bei positiven x-Fehlern minimiert die Funktion die gewichtete orthogonale
+Fehlerquadratsumme über Modellparameter und wahre x-Koordinaten:
+
+    chi² = Σ [(x_i - X_i)/dx_i]² + [(y_i - f(X_i; params))/dy_i]².
+
+`fit.x_adjusted` enthält die optimierten X_i; `fit.x_data` und
+`fit.y_data` bleiben die Messwerte. x-Fehler von 0 fixieren X_i = x_i.
+Bei ausschließlich positiven x-Fehlern und fehlenden y-Fehlern gilt y als
+exakt: Es wird unter f(X_i; params) = y_i minimiert. Das setzt eine reguläre
+lokale Umkehrbarkeit voraus; gemischte null/positive x-Fehler ohne y-Fehler
+werden nicht unterstützt. Ohne positive x-Fehler bleibt die bisherige
+`curve_fit`-Regression erhalten.
+
+`fit.chi2` enthält beide Koordinatenbeiträge; `fit.pulls` sind signierte
+normierte orthogonale Abstände (Summe der Quadrate = chi²). Die rohen
+vertikalen Residuen bleiben y_i - f(x_i); ihre Fehlerbalken verwenden eine
+lokale lineare Fehlerfortpflanzung zur Darstellung.
+Die Parameterkovarianz ist eine lokale Gauss-Newton-Näherung unter
+Elimination der X_i, ohne Skalierung mit chi²/ndof. Aktive Parametergrenzen
+erfordern für belastbare Konfidenzintervalle gesonderte Methoden.
+Das Modell muss punktweise wirken und in der Umgebung der Messwerte
+auswertbar sein. Wie bei sonstigen nichtlinearen Fits kann die Lösung vom
+Startwert abhängen. Geteilte Systematiken und korrelierte Messfehler werden
+nicht modelliert; Fitbereiche selektieren gemessene x-Werte, begrenzen
+aber nicht die latenten X_i.
