@@ -3,7 +3,6 @@
 import numpy as np
 import pandas as pd
 import pytest
-from scipy.optimize import curve_fit
 
 import pap_toolbox as pap
 
@@ -67,9 +66,13 @@ def test_only_horizontal_errors_matches_inverse_weighted_regression():
     x, y = _sample()
     dx = np.array([0.3, 0.2, 0.5, 0.4, 0.35, 0.25])
     fit = pap.linear_fit(x, y, xerr=dx)
-    (a, c), inverse_cov = curve_fit(
-        lambda y, a, c: a * y + c, y, x, sigma=dx, absolute_sigma=True
-    )
+    # Independent weighted QR/SVD reference, without finite-difference
+    # optimizer noise (particularly on older SciPy versions).
+    design = np.column_stack((y, np.ones_like(y))) / dx[:, None]
+    a, c = np.linalg.lstsq(design, x / dx, rcond=None)[0]
+    _, R = np.linalg.qr(design, mode="reduced")
+    R_inv = np.linalg.solve(R, np.eye(2))
+    inverse_cov = R_inv @ R_inv.T
     expected = (1.0 / a, -c / a)
     transform = np.array([[-1.0/a**2, 0], [c/a**2, -1.0/a]])
     np.testing.assert_allclose(fit.params, expected, rtol=1e-8)
