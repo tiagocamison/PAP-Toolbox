@@ -174,6 +174,7 @@ def _errors_in_variables_fit(x, y, dx, dy, bounds, fit_intercept):
 
         optimization = least_squares(
             residuals, start, jac=jacobian, bounds=(lo, hi), max_nfev=10000,
+            ftol=1e-11, xtol=1e-11, gtol=1e-11,
         )
         if not optimization.success or not np.all(np.isfinite(optimization.x)):
             raise ValueError("Errors-in-Variables-Fit ist nicht konvergiert.")

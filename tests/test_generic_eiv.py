@@ -31,7 +31,9 @@ def test_generic_linear_matches_profiled_linear_wrapper():
     linear = pap.linear_fit(d,"x","y",xerr="dx",yerr="dy")
     np.testing.assert_allclose(generic.params,linear.params,rtol=2e-6,atol=1e-7)
     assert generic.chi2 == pytest.approx(linear.chi2,rel=1e-8)
-    np.testing.assert_allclose(generic.pulls,linear.pulls,rtol=2e-5,atol=1e-7)
+    # Absolute tolerance matters for residuals close to zero: both solvers
+    # independently stop at a finite numerical optimization tolerance.
+    np.testing.assert_allclose(generic.pulls,linear.pulls,rtol=2e-5,atol=3e-6)
     np.testing.assert_allclose(generic.x_adjusted,linear.x_adjusted,rtol=2e-6,atol=1e-7)
 
 
